@@ -1,4 +1,5 @@
 import os
+import json
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -114,21 +115,15 @@ def read_root():
 async def upload_file(
     file: UploadFile = File(...), 
     vectorstore: str = Form(...),
-    groups: list[int] = Form(...)
+    groups: str = Form(...)
 ):
     logging.info(f"Uploading file: {file.filename} to vectorstore: {vectorstore} with groups: {groups}")
     try:
         file_location = f"uploaded_files/{file.filename}"
+        with open(file_location, "wb") as f:
+            shutil.copyfileobj(file.file, f)    
         logging.info(f"Saving file to {file_location}")
 
-        with open(file_location, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-
-        with open(file_location, "rb") as f:
-            raw_data = f.read()
-            detected_encoding = chardet.detect(raw_data)["encoding"]
-
-        encoding_to_use = detected_encoding if detected_encoding else "utf-8"
         content=convert_to_markdown(file_location)
         logging.info(f"Content of the file: {content}")
 
@@ -152,6 +147,10 @@ async def upload_file(
         texts = text_splitter.split_documents(document)
 
         # Embed metadata into each document
+
+        # convert the groups to string in JSON format
+        #groupstr = json.dumps(groups)
+        logging.info(f"Access control groups: {groups}")
         metadata = {
             "access_control_groups": groups,
             "author": "John Doe",
@@ -272,6 +271,72 @@ async def resetchromadb():
         logging.error(f"Error resetting Chroma vector store: {e}")
         return JSONResponse(
             content={"error": f"Error resetting Chroma vector store: {e}"},
+            status_code=500
+        )
+
+@app.post("/simplesearch")
+async def simplesearch(
+    query: str = Form(...),
+    vectorstore: str = Form(...),
+    groups: list[str] = Form(...)
+):
+    logging.info(f"Simple search initiated with query: '{query}' and groups: {groups}")
+    try:
+        # Determine which vector store to use based on environment variable
+        vectorstore_env = os.getenv("vectorstore", vectorstore)
+        if vectorstore_env == "chromadb":
+            retriever = vectorstorecdb.as_retriever()
+        elif vectorstore_env == "pgvector":
+            retriever = vectorstorepg.as_retriever()
+        else:
+            logging.error("Invalid vectorstore type for simplesearch.")
+            return JSONResponse(
+                content={"error": "Invalid vectorstore type. Must be either 'chromadb' or 'pgvector'."},
+                status_code=400
+            )
+        
+        # Perform the search with a filter on groups
+        # Update the filter to use the '$in' operator for the 'access_control_groups' field
+       # docs = retriever.invoke(query, filter={"access_control_groups": "1"})
+        group_filter_values = [str(g) for g in groups]
+        docs = retriever.invoke(
+            query,
+            filter={"access_control_groups": {"$in": group_filter_values}}
+        )
+        logging.info(f"Retrieved {len(docs)} documents from retriever.")
+        
+        docs_json = [{"content": d.page_content, "metadata": d.metadata} for d in docs]
+        response = llm_chain.invoke({"input": query, "docs": docs_json})
+        
+        logging.info("Simple search successful, returning response")
+        return JSONResponse(content={"response": response}, status_code=200)
+    except Exception as e:
+        logging.error(f"Error during simple search: {e}")
+        return JSONResponse(
+            content={"error": f"Error during simple search: {e}"},
+            status_code=500
+        )
+
+@app.get("/list_documents")
+async def list_documents():
+    logging.info("Endpoint '/list_documents' called")
+    try:
+        # Retrieve all documents from ChromaDB, excluding 'ids'
+        docs = vectorstorecdb._collection.get(include=["metadatas", "documents"])
+        
+        documents = []
+        for metadata, content in zip(docs["metadatas"], docs["documents"]):
+            documents.append({
+                "content": content,
+                "metadata": metadata
+            })
+        
+        logging.info(f"Retrieved {len(documents)} documents from ChromaDB.")
+        return JSONResponse(content={"documents": documents}, status_code=200)
+    except Exception as e:
+        logging.error(f"Error listing documents: {e}")
+        return JSONResponse(
+            content={"error": f"Error listing documents: {e}"},
             status_code=500
         )
 
