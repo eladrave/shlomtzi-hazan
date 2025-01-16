@@ -62,7 +62,10 @@ app.add_middleware(
 os.makedirs("uploaded_files", exist_ok=True)
 
 # Initialize LangChain components
+#TBD M.T. Change the embeddings to be configurable
+# Step 2 - have local embedding via HF Transformers and downloading he model + tokenizer locally
 embeddings = OpenAIEmbeddings(api_key=API_KEY)
+
 vectorstorecdb = Chroma(embedding_function=embeddings, persist_directory="chroma_db")
 # Alternatively, you can use a PostgreSQL-based vector store
 pg_host = os.getenv("PG_HOST", "localhost")
@@ -91,6 +94,8 @@ similarity_prompt = PromptTemplate(
 # Initialize the LLM
 llm = ChatOpenAI(api_key=API_KEY, model=MODEL)
 llm_chain = LLMChain(llm=llm, prompt=similarity_prompt)
+#LangChainDeprecationWarning: The class `LLMChain` was deprecated in LangChain 0.1.17 and will be removed in 1.0. Use :meth:`~RunnableSequence, e.g., `prompt | llm`` instead.
+# llm_chain = LLMChain(llm=llm, prompt=similarity_prompt)
 
 def convert_to_markdown(file_path: str) -> str:
     logging.info(f"Converting file to markdown: {file_path}")
