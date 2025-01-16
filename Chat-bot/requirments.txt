@@ -6,3 +6,10 @@ uvicorn
 chardet
 chromadb
 langchain_chroma
+langchain-postgres
+psycopg[binary]
+psycopg2-binary
+python-multipart
+markitdown
+unstructured
+unstructured[md]
